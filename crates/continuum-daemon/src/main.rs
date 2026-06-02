@@ -79,12 +79,29 @@ async fn main() -> Result<()> {
     let memory = Memory::open(&ws.db_path()).map_err(|e| anyhow::anyhow!("open memory: {e}"))?;
     let graph = Arc::new(RwLock::new(CodeGraph::new()));
 
+    // A workspace rooted at a drive/filesystem root or the user's home directory
+    // would walk an enormous tree and exhaust memory. When that is the case we
+    // skip everything that scales with the tree: the snapshot restore (an old
+    // poisoned snapshot can be gigabytes), the background index, and recursive
+    // watching. The daemon still serves memory and on-demand text search.
+    // CONTINUUM_ALLOW_LARGE_ROOT=1 overrides. This check must precede the
+    // snapshot restore below, or a giant graph.json would load before we bail.
+    let large_root = unsafe_index_root(&ws.root_path());
+    if let Some(reason) = &large_root {
+        tracing::warn!(
+            "skipping snapshot restore, indexing, and watching: {reason}. Open a \
+             project subdirectory, or set CONTINUUM_ALLOW_LARGE_ROOT=1 to override."
+        );
+    }
+
     // Warm start: restore the previous graph snapshot if one is present. The
     // background re-index below then refreshes it and prunes stale files.
-    if let Some(snapshot) = ws.read_snapshot() {
-        let files = snapshot.file_count();
-        graph.write().await.restore(snapshot);
-        tracing::info!("restored {files} files from snapshot");
+    if large_root.is_none() {
+        if let Some(snapshot) = ws.read_snapshot() {
+            let files = snapshot.file_count();
+            graph.write().await.restore(snapshot);
+            tracing::info!("restored {files} files from snapshot");
+        }
     }
 
     // The semantic engine exists immediately but stays dormant until the
@@ -92,15 +109,7 @@ async fn main() -> Result<()> {
     // blocks startup on a model download.
     let semantic = Arc::new(continuum_search::SemanticEngine::new());
 
-    // A workspace rooted at a drive/filesystem root or the user's home directory
-    // would walk an enormous tree and exhaust memory. Refuse to auto-index (and
-    // to recursively watch) such a root; the daemon still serves memory and
-    // on-demand text search. CONTINUUM_ALLOW_LARGE_ROOT=1 overrides.
-    let _watcher = if let Some(reason) = unsafe_index_root(&ws.root_path()) {
-        tracing::warn!(
-            "skipping automatic indexing: {reason}. Open a project subdirectory, \
-             or set CONTINUUM_ALLOW_LARGE_ROOT=1 to override."
-        );
+    let _watcher = if large_root.is_some() {
         None
     } else {
         // Index in the background so the daemon serves immediately; navigation

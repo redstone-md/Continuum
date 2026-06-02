@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "continuum-adapter"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "clap",
  "continuum-core",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "continuum-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "serde",
  "serde_json",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "continuum-daemon"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "clap",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "continuum-graph"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "continuum-core",
  "petgraph",
@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "continuum-indexer"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "continuum-core",
  "continuum-graph",
@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "continuum-memory"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "continuum-core",
  "rusqlite",
@@ -345,7 +345,7 @@ dependencies = [
 
 [[package]]
 name = "continuum-search"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "continuum-core",
@@ -356,7 +356,7 @@ dependencies = [
 
 [[package]]
 name = "continuum-transport"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "continuum-core",
  "serde",

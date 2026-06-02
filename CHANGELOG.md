@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-02
+
+### Fixed
+
+- Check the large-root guard before restoring the warm-start snapshot. The
+  guard added in 0.1.5 ran after the restore, so a daemon pointed at a home
+  directory or drive root still loaded a previously written (and possibly
+  multi-gigabyte) `graph.json` before bailing. An oversized root now skips
+  snapshot restore, indexing, and watching alike.
+
 ## [0.1.5] - 2026-06-02
 
 ### Added
@@ -75,7 +85,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Unit and end-to-end test suites, and a GitHub Actions CI pipeline (fmt,
   clippy, build, test on Linux and Windows).
 
-[Unreleased]: https://github.com/redstone-md/Continuum/compare/v0.1.5...main
+[Unreleased]: https://github.com/redstone-md/Continuum/compare/v0.1.6...main
+[0.1.6]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.6
 [0.1.5]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.5
 [0.1.4]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.4
 [0.1.3]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.3

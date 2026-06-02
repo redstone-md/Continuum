@@ -1,6 +1,6 @@
 {
   "name": "continuum-mcp",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Continuum — a persistent, multi-agent Model Context Protocol server for shared code context and cross-agent memory",
   "keywords": ["mcp", "model-context-protocol", "ai", "agent", "code-search"],
   "license": "MIT",

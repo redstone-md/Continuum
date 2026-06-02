@@ -6,7 +6,7 @@ mod lifecycle;
 mod mcp;
 mod tools;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -92,22 +92,35 @@ async fn main() -> Result<()> {
     // blocks startup on a model download.
     let semantic = Arc::new(continuum_search::SemanticEngine::new());
 
-    // Index in the background so the daemon serves immediately; navigation
-    // tools return progressively richer results as the scan completes.
-    {
-        let graph = graph.clone();
-        let semantic = semantic.clone();
-        let root = ws.root_path();
-        let ws_snapshot = ws.clone();
-        tokio::spawn(async move {
-            let n = continuum_indexer::index_workspace(&root, graph.clone(), semantic).await;
-            tracing::info!("initial index complete: {n} files");
-            ws_snapshot.write_snapshot(&graph.read().await.snapshot());
-        });
-    }
-    let _watcher =
-        continuum_indexer::start_watcher(ws.root_path(), graph.clone(), semantic.clone())
-            .map_err(|e| anyhow::anyhow!("start file watcher: {e}"))?;
+    // A workspace rooted at a drive/filesystem root or the user's home directory
+    // would walk an enormous tree and exhaust memory. Refuse to auto-index (and
+    // to recursively watch) such a root; the daemon still serves memory and
+    // on-demand text search. CONTINUUM_ALLOW_LARGE_ROOT=1 overrides.
+    let _watcher = if let Some(reason) = unsafe_index_root(&ws.root_path()) {
+        tracing::warn!(
+            "skipping automatic indexing: {reason}. Open a project subdirectory, \
+             or set CONTINUUM_ALLOW_LARGE_ROOT=1 to override."
+        );
+        None
+    } else {
+        // Index in the background so the daemon serves immediately; navigation
+        // tools return progressively richer results as the scan completes.
+        {
+            let graph = graph.clone();
+            let semantic = semantic.clone();
+            let root = ws.root_path();
+            let ws_snapshot = ws.clone();
+            tokio::spawn(async move {
+                let n = continuum_indexer::index_workspace(&root, graph.clone(), semantic).await;
+                tracing::info!("initial index complete: {n} files");
+                ws_snapshot.write_snapshot(&graph.read().await.snapshot());
+            });
+        }
+        Some(
+            continuum_indexer::start_watcher(ws.root_path(), graph.clone(), semantic.clone())
+                .map_err(|e| anyhow::anyhow!("start file watcher: {e}"))?,
+        )
+    };
 
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -306,10 +319,41 @@ pub(crate) fn maybe_start_semantic_load(daemon: &Arc<Daemon>) {
     );
 }
 
-fn semantic_preload_enabled() -> bool {
-    std::env::var("CONTINUUM_PRELOAD_MODEL")
+/// A human-readable reason if `root` is too broad to auto-index — a filesystem
+/// root or the user's home directory — or `None` when it is safe (or the
+/// `CONTINUUM_ALLOW_LARGE_ROOT` escape hatch is set). `root` is already
+/// canonicalized by [`Workspace::resolve`], as is the home directory here, so
+/// the comparison is exact.
+fn unsafe_index_root(root: &Path) -> Option<String> {
+    if env_flag("CONTINUUM_ALLOW_LARGE_ROOT") {
+        return None;
+    }
+    if root.parent().is_none() {
+        return Some(format!("{} is a filesystem root", root.display()));
+    }
+    if home_dir().is_some_and(|home| home == root) {
+        return Some(format!("{} is your home directory", root.display()));
+    }
+    None
+}
+
+/// The user's home directory, canonicalized to match a resolved workspace root.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .and_then(|p| p.canonicalize().ok())
+}
+
+/// Whether an environment variable is set to a truthy value.
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
         .ok()
-        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+fn semantic_preload_enabled() -> bool {
+    env_flag("CONTINUUM_PRELOAD_MODEL")
 }
 
 /// Validate the Continuum handshake, then serve MCP for the connection's life.

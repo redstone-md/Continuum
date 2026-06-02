@@ -168,6 +168,8 @@ agent → adapter → daemon spawn chain. All are optional.
 | `CONTINUUM_PRELOAD_MODEL` | unset | Set to `1`, `true`, `yes`, or `on` to load semantic search at daemon startup instead of lazily. |
 | `CONTINUUM_IDLE_MINUTES` | `30` | Idle minutes before the daemon exits (`0` = never). |
 | `CONTINUUM_MAX_FILE_KIB` | `2048` | Largest file size indexed, in KiB. |
+| `CONTINUUM_MAX_FILES` | `50000` | Files indexed per pass (`0` = unlimited). Caps memory on huge trees. |
+| `CONTINUUM_ALLOW_LARGE_ROOT` | unset | Set truthy to auto-index even when the workspace root is a drive root or home directory. |
 | `CONTINUUM_DEBOUNCE_MS` | `300` | Filesystem-watch debounce window. |
 
 ## MCP tools

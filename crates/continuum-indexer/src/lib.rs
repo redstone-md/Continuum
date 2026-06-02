@@ -20,15 +20,49 @@ pub use textsearch::search_text;
 pub use watcher::start_watcher;
 
 /// Directory names never descended into during indexing.
+///
+/// Covers version-control metadata, dependency stores, build output, language
+/// caches, and the bulky home-directory trees (`AppData`, `Library`) that a
+/// misaimed workspace root would otherwise drag in. These are the safety net
+/// over `.gitignore`/`.ignore`, which many of these directories lack.
 const SKIP_DIRS: &[&str] = &[
+    // Version control
     ".git",
-    "target",
-    "node_modules",
+    ".svn",
+    ".hg",
+    // Continuum's own state
     ".continuum",
+    // Dependency stores
+    "node_modules",
+    "vendor",
+    "Pods",
+    // Build output
+    "target",
     "dist",
     "build",
+    "out",
+    // Python environments and caches
     ".venv",
+    "venv",
     "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+    // JS/TS framework output
+    ".next",
+    ".nuxt",
+    "coverage",
+    // Language / tool caches
+    ".cache",
+    ".cargo",
+    ".rustup",
+    ".npm",
+    ".gradle",
+    ".m2",
+    // Editor / OS home-directory bloat
+    ".idea",
+    "AppData",
+    "Library",
 ];
 
 /// Full one-shot index of a workspace. Returns the number of files indexed.
@@ -186,15 +220,41 @@ pub(crate) fn is_skipped_path(root: &Path, path: &Path) -> bool {
         .any(|name| SKIP_DIRS.contains(&name))
 }
 
+/// Hard ceiling on files pulled into one index pass — override with
+/// `CONTINUUM_MAX_FILES` (`0` disables the cap). Keeps a workspace rooted at a
+/// huge tree (a home directory, a drive root) from exhausting memory: every
+/// indexed file's symbols, BM25 tokens, and embeddings live in RAM.
+static MAX_FILES: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
+    match std::env::var("CONTINUUM_MAX_FILES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        Some(0) => usize::MAX,
+        Some(n) => n,
+        None => 50_000,
+    }
+});
+
 fn collect_source_files(root: &Path) -> Vec<PathBuf> {
-    ignore::WalkBuilder::new(root)
+    let cap = *MAX_FILES;
+    let mut files = Vec::new();
+    for entry in ignore::WalkBuilder::new(root)
         .require_git(false)
         .filter_entry(|entry| !is_skipped_dir(entry))
         .build()
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().is_some_and(|t| t.is_file()))
-        .map(|entry| entry.path().to_path_buf())
-        .collect()
+    {
+        if files.len() >= cap {
+            tracing::warn!(
+                "file cap ({cap}) reached; indexing truncated — narrow the workspace \
+                 or raise CONTINUUM_MAX_FILES (0 disables the cap)"
+            );
+            break;
+        }
+        files.push(entry.path().to_path_buf());
+    }
+    files
 }
 
 #[cfg(test)]
@@ -212,6 +272,14 @@ mod tests {
         assert!(is_skipped_path(
             root,
             Path::new("/workspace/pkg/node_modules/a.js")
+        ));
+        assert!(is_skipped_path(
+            root,
+            Path::new("/workspace/.venv/lib/site-packages/a.py")
+        ));
+        assert!(is_skipped_path(
+            root,
+            Path::new("/workspace/AppData/Local/cache/a.ts")
         ));
         assert!(!is_skipped_path(root, Path::new("/workspace/src/lib.rs")));
     }

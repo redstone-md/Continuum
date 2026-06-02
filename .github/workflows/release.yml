@@ -54,6 +54,32 @@ jobs:
         with:
           files: dist/*
 
+  release-notes:
+    name: release notes from changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Extract the changelog section for this tag and use it as the release
+      # body. Other jobs attach assets without a body, so they never overwrite
+      # these notes.
+      - name: Extract changelog section
+        shell: bash
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v v="$ver" '
+            $0 ~ "^## \\["v"\\]" {f=1; next}
+            f && /^## \[/ {exit}
+            f {print}
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "no changelog section for $ver" >&2
+            exit 1
+          fi
+      - name: Set release body
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
+
   npm-package:
     name: npm wrapper tarball
     runs-on: ubuntu-latest

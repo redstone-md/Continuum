@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-02
+
+### Added
+
+- Guard against out-of-memory when a workspace root is too broad: the daemon
+  skips automatic indexing and recursive watching when the root is a filesystem
+  root or the user's home directory (override with `CONTINUUM_ALLOW_LARGE_ROOT`),
+  and a single index pass is capped at `CONTINUUM_MAX_FILES` files (default
+  50000, `0` disables). Memory and on-demand text search keep working.
+
+### Changed
+
+- Broaden the default skipped directories (version-control metadata, dependency
+  stores, build output, language caches, and home-directory bloat such as
+  `AppData`, `Library`, `.cache`, `.cargo`, and `vendor`).
+
 ## [0.1.4] - 2026-05-20
 
 ### Fixed
@@ -59,7 +75,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Unit and end-to-end test suites, and a GitHub Actions CI pipeline (fmt,
   clippy, build, test on Linux and Windows).
 
-[Unreleased]: https://github.com/redstone-md/Continuum/compare/v0.1.4...main
+[Unreleased]: https://github.com/redstone-md/Continuum/compare/v0.1.5...main
+[0.1.5]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.5
 [0.1.4]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.4
 [0.1.3]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.3
 [0.1.2]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.2

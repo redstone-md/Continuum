@@ -225,7 +225,10 @@ pub(crate) fn is_skipped_path(root: &Path, path: &Path) -> bool {
 /// huge tree (a home directory, a drive root) from exhausting memory: every
 /// indexed file's symbols, BM25 tokens, and embeddings live in RAM.
 static MAX_FILES: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    match std::env::var("CONTINUUM_MAX_FILES").ok().and_then(|v| v.parse().ok()) {
+    match std::env::var("CONTINUUM_MAX_FILES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
         Some(0) => usize::MAX,
         Some(n) => n,
         None => 50_000,

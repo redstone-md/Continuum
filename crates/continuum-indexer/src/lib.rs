@@ -20,15 +20,49 @@ pub use textsearch::search_text;
 pub use watcher::start_watcher;
 
 /// Directory names never descended into during indexing.
+///
+/// Covers version-control metadata, dependency stores, build output, language
+/// caches, and the bulky home-directory trees (`AppData`, `Library`) that a
+/// misaimed workspace root would otherwise drag in. These are the safety net
+/// over `.gitignore`/`.ignore`, which many of these directories lack.
 const SKIP_DIRS: &[&str] = &[
+    // Version control
     ".git",
-    "target",
-    "node_modules",
+    ".svn",
+    ".hg",
+    // Continuum's own state
     ".continuum",
+    // Dependency stores
+    "node_modules",
+    "vendor",
+    "Pods",
+    // Build output
+    "target",
     "dist",
     "build",
+    "out",
+    // Python environments and caches
     ".venv",
+    "venv",
     "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+    // JS/TS framework output
+    ".next",
+    ".nuxt",
+    "coverage",
+    // Language / tool caches
+    ".cache",
+    ".cargo",
+    ".rustup",
+    ".npm",
+    ".gradle",
+    ".m2",
+    // Editor / OS home-directory bloat
+    ".idea",
+    "AppData",
+    "Library",
 ];
 
 /// Full one-shot index of a workspace. Returns the number of files indexed.
@@ -212,6 +246,14 @@ mod tests {
         assert!(is_skipped_path(
             root,
             Path::new("/workspace/pkg/node_modules/a.js")
+        ));
+        assert!(is_skipped_path(
+            root,
+            Path::new("/workspace/.venv/lib/site-packages/a.py")
+        ));
+        assert!(is_skipped_path(
+            root,
+            Path::new("/workspace/AppData/Local/cache/a.ts")
         ));
         assert!(!is_skipped_path(root, Path::new("/workspace/src/lib.rs")));
     }

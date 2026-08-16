@@ -104,3 +104,52 @@ impl Workspace {
         }
     }
 }
+
+/// A human-readable reason if `root` is too broad to auto-index — a filesystem
+/// root or the user's home directory — or `None` when it is safe. The
+/// `CONTINUUM_ALLOW_LARGE_ROOT` escape hatch (`allow_large_root`) skips the
+/// check. `root` is already canonicalized by [`Workspace::resolve`], as is the
+/// home directory, so the comparison is exact.
+pub fn unsafe_index_root(root: &Path, allow_large_root: bool) -> Option<String> {
+    if allow_large_root {
+        return None;
+    }
+    if root.parent().is_none() {
+        return Some(format!("{} is a filesystem root", root.display()));
+    }
+    if home_dir().is_some_and(|home| home == root) {
+        return Some(format!("{} is your home directory", root.display()));
+    }
+    None
+}
+
+/// The user's home directory, canonicalized to match a resolved workspace root.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .and_then(|p| p.canonicalize().ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The home-directory branch is not covered here: it reads the ambient
+    /// environment, and mutating that races every other test in the binary.
+    #[test]
+    fn filesystem_root_is_rejected() {
+        assert!(unsafe_index_root(Path::new("/"), false).is_some());
+    }
+
+    #[test]
+    fn an_ordinary_directory_is_allowed() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(unsafe_index_root(&cwd, false), None);
+    }
+
+    #[test]
+    fn the_escape_hatch_skips_every_check() {
+        assert_eq!(unsafe_index_root(Path::new("/"), true), None);
+    }
+}

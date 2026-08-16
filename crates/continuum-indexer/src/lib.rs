@@ -74,11 +74,12 @@ pub async fn index_workspace(
     root: &Path,
     graph: Arc<RwLock<CodeGraph>>,
     semantic: Arc<SemanticEngine>,
+    settings: &continuum_core::Settings,
 ) -> usize {
     let mut indexed: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for abs in collect_source_files(root) {
+    for abs in collect_source_files(root, settings.max_files) {
         // Parsing is CPU-bound and lock-free; only the graph update takes the lock.
-        if let Some((rel, parsed)) = parse_path(root, &abs) {
+        if let Some((rel, parsed)) = parse_path(root, &abs, settings.max_file_bytes) {
             let docs = symbol_docs(&parsed);
             {
                 let mut guard = graph.write().await;
@@ -108,6 +109,7 @@ pub(crate) async fn reindex_one(
     abs: &Path,
     graph: &Arc<RwLock<CodeGraph>>,
     semantic: &Arc<SemanticEngine>,
+    max_file_bytes: u64,
 ) {
     if is_skipped_path(root, abs) {
         return;
@@ -122,7 +124,7 @@ pub(crate) async fn reindex_one(
     }
     let rel = rel_path(root, abs);
     if abs.is_file() {
-        if let Some((_, parsed)) = parse_path(root, abs) {
+        if let Some((_, parsed)) = parse_path(root, abs, max_file_bytes) {
             let docs = symbol_docs(&parsed);
             {
                 let mut guard = graph.write().await;
@@ -164,21 +166,17 @@ fn embedding_text(node: &continuum_graph::GraphNode) -> String {
     format!("{} {}", node.name, body)
 }
 
-/// Largest file indexed, in bytes — override with `CONTINUUM_MAX_FILE_KIB`.
-/// Files above this are skipped: generated bundles and vendored blobs, not code
-/// an agent navigates by symbol.
-static MAX_FILE_BYTES: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
-    std::env::var("CONTINUUM_MAX_FILE_KIB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(|kib| kib * 1024)
-        .unwrap_or(2 * 1024 * 1024)
-});
-
-fn parse_path(root: &Path, abs: &Path) -> Option<(String, parser::ParsedFile)> {
+/// Largest file indexed, in bytes (from `CONTINUUM_MAX_FILE_KIB` via
+/// [`continuum_core::Settings`]). Files above this are skipped: generated
+/// bundles and vendored blobs, not code an agent navigates by symbol.
+fn parse_path(
+    root: &Path,
+    abs: &Path,
+    max_file_bytes: u64,
+) -> Option<(String, parser::ParsedFile)> {
     let ext = abs.extension()?.to_str()?;
     let lang = Lang::from_extension(ext)?;
-    if std::fs::metadata(abs).ok()?.len() > *MAX_FILE_BYTES {
+    if std::fs::metadata(abs).ok()?.len() > max_file_bytes {
         return None;
     }
     let source = std::fs::read_to_string(abs).ok()?;
@@ -220,23 +218,12 @@ pub(crate) fn is_skipped_path(root: &Path, path: &Path) -> bool {
         .any(|name| SKIP_DIRS.contains(&name))
 }
 
-/// Hard ceiling on files pulled into one index pass — override with
-/// `CONTINUUM_MAX_FILES` (`0` disables the cap). Keeps a workspace rooted at a
-/// huge tree (a home directory, a drive root) from exhausting memory: every
-/// indexed file's symbols, BM25 tokens, and embeddings live in RAM.
-static MAX_FILES: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| {
-    match std::env::var("CONTINUUM_MAX_FILES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-    {
-        Some(0) => usize::MAX,
-        Some(n) => n,
-        None => 50_000,
-    }
-});
-
-fn collect_source_files(root: &Path) -> Vec<PathBuf> {
-    let cap = *MAX_FILES;
+/// Hard ceiling on files pulled into one index pass (from `CONTINUUM_MAX_FILES`
+/// via [`continuum_core::Settings`]; `0` disables the cap). Keeps a workspace
+/// rooted at a huge tree (a home directory, a drive root) from exhausting
+/// memory: every indexed file's symbols, BM25 tokens, and embeddings live in
+/// RAM.
+fn collect_source_files(root: &Path, cap: usize) -> Vec<PathBuf> {
     let mut files = Vec::new();
     for entry in ignore::WalkBuilder::new(root)
         .require_git(false)

@@ -5,12 +5,44 @@
 //! and no approximate-nearest-neighbour structure to maintain.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use continuum_core::dto::SearchHit;
 use tokio::sync::RwLock;
 
 use crate::embedder::Embedder;
+
+const STATE_DORMANT: u8 = 0;
+const STATE_LOADING: u8 = 1;
+const STATE_READY: u8 = 2;
+const STATE_DISABLED: u8 = 3;
+
+/// Lifecycle of the semantic engine, surfaced by `get_stats` and used to decide
+/// whether `search_code` fuses lexical + semantic results or falls back to
+/// lexical-only.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SemanticStatus {
+    /// Created but no model load requested yet.
+    Dormant,
+    /// A model load is in flight.
+    Loading,
+    /// Model installed and serving semantic results.
+    Ready,
+    /// Model load was attempted and failed; lexical-only from here on.
+    Disabled,
+}
+
+impl SemanticStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            SemanticStatus::Dormant => "dormant",
+            SemanticStatus::Loading => "loading",
+            SemanticStatus::Ready => "ready",
+            SemanticStatus::Disabled => "disabled",
+        }
+    }
+}
 
 /// A symbol handed to the semantic index for embedding.
 pub struct SymbolDoc {
@@ -77,6 +109,9 @@ impl SemanticIndex {
 pub struct SemanticEngine {
     embedder: OnceLock<Embedder>,
     index: RwLock<SemanticIndex>,
+    state: AtomicU8,
+    /// Fired once, on the first query while dormant, to start the model load.
+    load_trigger: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl Default for SemanticEngine {
@@ -90,6 +125,8 @@ impl SemanticEngine {
         Self {
             embedder: OnceLock::new(),
             index: RwLock::new(SemanticIndex::default()),
+            state: AtomicU8::new(STATE_DORMANT),
+            load_trigger: Mutex::new(None),
         }
     }
 
@@ -98,9 +135,58 @@ impl SemanticEngine {
         let _ = self.embedder.set(embedder);
     }
 
-    /// Whether the embedding model has loaded and the engine is serving.
-    pub fn is_ready(&self) -> bool {
-        self.embedder.get().is_some()
+    /// Where the engine is in its load lifecycle. `Ready` is the only state in
+    /// which queries fuse semantic results.
+    pub fn status(&self) -> SemanticStatus {
+        match self.state.load(Ordering::SeqCst) {
+            STATE_LOADING => SemanticStatus::Loading,
+            STATE_READY => SemanticStatus::Ready,
+            STATE_DISABLED => SemanticStatus::Disabled,
+            _ => SemanticStatus::Dormant,
+        }
+    }
+
+    /// Install the callback fired when the engine leaves the dormant state —
+    /// the host's "load the model and re-index" task.
+    pub fn set_load_trigger(&self, trigger: Box<dyn Fn() + Send + Sync>) {
+        *self.load_trigger.lock().unwrap() = Some(trigger);
+    }
+
+    /// Move dormant → loading and fire the load trigger, exactly once. No-op in
+    /// any other state. If no trigger is installed the transition is rolled
+    /// back, so a later `set_load_trigger` + `kick` still works.
+    pub fn kick(&self) {
+        if !self.begin_loading() {
+            return;
+        }
+        // Take the trigger out before invoking it: the callback must not run
+        // under the lock (it may spawn, panic, or re-enter this engine).
+        let trigger = self.load_trigger.lock().unwrap().take();
+        match trigger {
+            Some(trigger) => trigger(),
+            None => self.state.store(STATE_DORMANT, Ordering::SeqCst),
+        }
+    }
+
+    fn begin_loading(&self) -> bool {
+        self.state
+            .compare_exchange(
+                STATE_DORMANT,
+                STATE_LOADING,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_ok()
+    }
+
+    /// Call after activation and re-indexing complete: queries now fuse.
+    pub fn mark_ready(&self) {
+        self.state.store(STATE_READY, Ordering::SeqCst);
+    }
+
+    /// Call when the model load failed: stay lexical-only permanently.
+    pub fn mark_disabled(&self) {
+        self.state.store(STATE_DISABLED, Ordering::SeqCst);
     }
 
     /// Embed and store all symbols of one file, replacing any prior entries.
@@ -167,6 +253,22 @@ fn normalize(mut v: Vec<f32>) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kick_without_a_trigger_rolls_back_to_dormant() {
+        let engine = SemanticEngine::new();
+        engine.kick();
+        assert_eq!(engine.status(), SemanticStatus::Dormant);
+
+        let fired = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let fired_clone = fired.clone();
+        engine.set_load_trigger(Box::new(move || {
+            fired_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        engine.kick();
+        assert_eq!(fired.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(engine.status(), SemanticStatus::Loading);
+    }
 
     #[test]
     fn normalize_yields_unit_length() {

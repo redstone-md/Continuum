@@ -6,8 +6,10 @@
 
 mod embedder;
 mod fusion;
+mod hybrid;
 mod index;
 
 pub use embedder::Embedder;
 pub use fusion::fuse;
-pub use index::{SemanticEngine, SymbolDoc};
+pub use hybrid::query;
+pub use index::{SemanticEngine, SemanticStatus, SymbolDoc};

@@ -5,10 +5,8 @@
 //! toolchain and adds no native-library dependency.
 
 use anyhow::Result;
+use continuum_core::Settings;
 use model2vec_rs::model::StaticModel;
-
-/// Default HuggingFace repo of the static embedding model (~30 MB).
-const DEFAULT_MODEL_REPO: &str = "minishlab/potion-base-8M";
 
 /// Loaded embedding model. Cheap to call; clone-free, shared behind an `Arc`.
 pub struct Embedder {
@@ -17,16 +15,14 @@ pub struct Embedder {
 
 impl Embedder {
     /// Load the embedding model, downloading it from HuggingFace on first use.
-    ///
-    /// The repo is overridable with the `CONTINUUM_MODEL` environment variable;
-    /// setting it to `off` (or `none`) disables semantic search entirely.
-    pub fn load() -> Result<Embedder> {
-        let repo =
-            std::env::var("CONTINUUM_MODEL").unwrap_or_else(|_| DEFAULT_MODEL_REPO.to_string());
-        if matches!(repo.trim(), "" | "off" | "none" | "disabled") {
+    /// The repo comes from `settings.model_repo` (`CONTINUUM_MODEL`); setting it
+    /// to `off` (or `none`) disables semantic search entirely.
+    pub fn load(settings: &Settings) -> Result<Embedder> {
+        let repo = settings.model_repo.trim();
+        if matches!(repo, "" | "off" | "none" | "disabled") {
             anyhow::bail!("semantic search disabled via CONTINUUM_MODEL");
         }
-        let model = StaticModel::from_pretrained(&repo, None, Some(true), None)?;
+        let model = StaticModel::from_pretrained(repo, None, Some(true), None)?;
         Ok(Embedder { model })
     }
 

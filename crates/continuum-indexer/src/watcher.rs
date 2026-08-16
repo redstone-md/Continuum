@@ -4,8 +4,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
+use continuum_core::Settings;
 use continuum_graph::CodeGraph;
 use continuum_search::SemanticEngine;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -17,23 +17,17 @@ use crate::is_skipped_path;
 /// unbounded number of paths in memory.
 const WATCH_QUEUE_CAP: usize = 4096;
 
-/// Debounce window for coalescing filesystem events — override with
-/// `CONTINUUM_DEBOUNCE_MS`.
-static DEBOUNCE: std::sync::LazyLock<Duration> = std::sync::LazyLock::new(|| {
-    let ms = std::env::var("CONTINUUM_DEBOUNCE_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(300);
-    Duration::from_millis(ms)
-});
-
 /// Begin watching `root`. The returned `RecommendedWatcher` must be kept alive
-/// for watching to continue -- dropping it stops the watch.
+/// for watching to continue -- dropping it stops the watch. The debounce window
+/// and per-file size cap come from `settings`.
 pub fn start_watcher(
     root: PathBuf,
     graph: Arc<RwLock<CodeGraph>>,
     semantic: Arc<SemanticEngine>,
+    settings: &Settings,
 ) -> notify::Result<RecommendedWatcher> {
+    let debounce = settings.debounce;
+    let max_file_bytes = settings.max_file_bytes;
     let (tx, mut rx) = mpsc::channel::<PathBuf>(WATCH_QUEUE_CAP);
     let callback_root = root.clone();
 
@@ -56,7 +50,7 @@ pub fn start_watcher(
             let mut batch: HashSet<PathBuf> = HashSet::new();
             batch.insert(first);
 
-            let timer = tokio::time::sleep(*DEBOUNCE);
+            let timer = tokio::time::sleep(debounce);
             tokio::pin!(timer);
             loop {
                 tokio::select! {
@@ -69,7 +63,7 @@ pub fn start_watcher(
             }
 
             for path in &batch {
-                crate::reindex_one(&root, path, &graph, &semantic).await;
+                crate::reindex_one(&root, path, &graph, &semantic, max_file_bytes).await;
             }
             let mut guard = graph.write().await;
             continuum_graph::resolver::resolve(&mut guard);

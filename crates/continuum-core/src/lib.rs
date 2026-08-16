@@ -7,6 +7,8 @@
 pub mod dto;
 pub mod error;
 pub mod protocol;
+pub mod settings;
 
 pub use error::{ContinuumError, Result};
 pub use protocol::{Handshake, HandshakeReply, LockFile, MCP_PROTOCOL_VERSION, PROTOCOL_VERSION};
+pub use settings::{Settings, DEFAULT_MODEL_REPO};

@@ -266,8 +266,9 @@ fn name_from_callee(node: Node, src: &[u8]) -> Option<String> {
         "identifier" | "field_identifier" | "property_identifier" | "type_identifier" | "name" => {
             text(node)
         }
-        // PHP `\Foo\bar()` — the trailing segment is the callee.
-        "qualified_name" => node
+        // PHP `\Foo\bar()` and `namespace\bar()` — both wrap the callee behind
+        // a namespace prefix, and the trailing segment is the name.
+        "qualified_name" | "relative_name" => node
             .named_child(node.named_child_count().checked_sub(1)?)
             .and_then(text),
         "dot_index_expression" => node.child_by_field_name("field").and_then(text),
@@ -367,6 +368,21 @@ mod tests {
             .expect("open");
         assert!(open.calls.iter().any(|c| c.name == "helper"));
         assert!(open.calls.iter().any(|c| c.name == "shut"));
+    }
+
+    #[test]
+    fn php_namespaced_calls_resolve_to_their_final_segment() {
+        let src =
+            "<?php\nnamespace App;\nfunction caller() { \\Other\\one(); namespace\\two(); }\n";
+        let parsed = parse("n.php", src, Lang::Php).expect("parsed");
+        let caller = parsed
+            .symbols
+            .iter()
+            .find(|s| s.name == "caller")
+            .expect("caller");
+        let called: Vec<&str> = caller.calls.iter().map(|c| c.name.as_str()).collect();
+        assert!(called.contains(&"one"), "got {called:?}");
+        assert!(called.contains(&"two"), "got {called:?}");
     }
 
     #[test]

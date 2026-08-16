@@ -6,17 +6,37 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-08-16
+
+Two new languages in the code graph, bringing the total to seven.
+
 ### Added
 
-- PHP (`.php`, `.phtml`) and Lua (`.lua`) indexing. PHP contributes functions,
-  methods, classes, interfaces, traits and enums, with PHPUnit `test*` methods
-  flagged as tests; Lua contributes named function declarations, indexed under
-  their final segment so `function M.foo()` matches calls to `M.foo()`.
+- **PHP indexing** (`.php`, `.phtml`). Functions, methods, classes, interfaces,
+  traits and enums become graph symbols, with full signatures. Call edges follow
+  every invocation form the grammar distinguishes — plain, `->method()`,
+  `?->method()`, `::method()`, and namespaced (`\Foo\bar()`, `namespace\bar()`),
+  each resolved to its final segment so call sites meet their definitions.
+  PHPUnit `test*` methods are flagged as test code.
+- **Lua indexing** (`.lua`). Named function declarations become symbols, indexed
+  under their final segment so `function M.foo()` answers `find_callers` for
+  `M.foo()` and `obj:method()` alike. Metatable OOP stays invisible: it is a
+  runtime pattern no grammar can see.
+
+Both languages arrive across the whole toolset — `get_file_outline`,
+`get_symbol_definition`, `find_callers`, `search_code` and the semantic index —
+because they enter through the same parser every other language uses.
 
 ### Changed
 
-- Bumped tree-sitter to 0.25 and every grammar to its ABI 15 release, which the
-  PHP and Lua grammars require.
+- tree-sitter moves to 0.25 and every existing grammar to its current release.
+  The PHP and Lua grammars ship ABI 15, which the 0.24 runtime cannot load. The
+  five original languages parse unchanged; existing workspaces re-index
+  themselves on the next daemon start, so no snapshot migration is needed.
+- Environment tuning is now resolved once into `continuum_core::Settings` at
+  daemon startup instead of through scattered `LazyLock` statics, and the
+  semantic engine owns its own readiness state machine. Behaviour is unchanged;
+  both were previously untestable without touching the process environment.
 
 ## [0.1.6] - 2026-06-02
 
@@ -97,7 +117,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Unit and end-to-end test suites, and a GitHub Actions CI pipeline (fmt,
   clippy, build, test on Linux and Windows).
 
-[Unreleased]: https://github.com/redstone-md/Continuum/compare/v0.1.6...main
+[Unreleased]: https://github.com/redstone-md/Continuum/compare/v0.1.7...main
+[0.1.7]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.7
 [0.1.6]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.6
 [0.1.5]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.5
 [0.1.4]: https://github.com/redstone-md/Continuum/releases/tag/v0.1.4

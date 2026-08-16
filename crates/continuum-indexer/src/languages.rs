@@ -9,6 +9,8 @@ pub enum Lang {
     JavaScript,
     TypeScript,
     Go,
+    Php,
+    Lua,
 }
 
 impl Lang {
@@ -20,6 +22,8 @@ impl Lang {
             "js" | "jsx" | "mjs" | "cjs" => Some(Lang::JavaScript),
             "ts" | "tsx" | "mts" | "cts" => Some(Lang::TypeScript),
             "go" => Some(Lang::Go),
+            "php" | "phtml" => Some(Lang::Php),
+            "lua" => Some(Lang::Lua),
             _ => None,
         }
     }
@@ -31,6 +35,8 @@ impl Lang {
             Lang::JavaScript => "javascript",
             Lang::TypeScript => "typescript",
             Lang::Go => "go",
+            Lang::Php => "php",
+            Lang::Lua => "lua",
         }
     }
 
@@ -42,6 +48,10 @@ impl Lang {
             Lang::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
             Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             Lang::Go => tree_sitter_go::LANGUAGE.into(),
+            // `LANGUAGE_PHP`, not `LANGUAGE_PHP_ONLY`: real `.php` files
+            // interleave HTML around the code.
+            Lang::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+            Lang::Lua => tree_sitter_lua::LANGUAGE.into(),
         }
     }
 }
@@ -57,6 +67,8 @@ mod tests {
         assert_eq!(Lang::from_extension("jsx"), Some(Lang::JavaScript));
         assert_eq!(Lang::from_extension("tsx"), Some(Lang::TypeScript));
         assert_eq!(Lang::from_extension("go"), Some(Lang::Go));
+        assert_eq!(Lang::from_extension("php"), Some(Lang::Php));
+        assert_eq!(Lang::from_extension("lua"), Some(Lang::Lua));
         assert_eq!(Lang::from_extension("txt"), None);
         assert_eq!(Lang::from_extension(""), None);
     }
@@ -69,6 +81,8 @@ mod tests {
             Lang::JavaScript,
             Lang::TypeScript,
             Lang::Go,
+            Lang::Php,
+            Lang::Lua,
         ] {
             let mut parser = tree_sitter::Parser::new();
             assert!(

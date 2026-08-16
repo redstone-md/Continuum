@@ -25,7 +25,7 @@ hand off architectural intent to the next without re-deriving context.
 ## Features
 
 - **Live code graph** — tree-sitter parsing of Rust, Python, JavaScript,
-  TypeScript and Go, kept in sync by a filesystem watcher.
+  TypeScript, Go, PHP and Lua, kept in sync by a filesystem watcher.
 - **Hybrid code search** — `search_code` fuses lexical BM25 ranking with semantic
   embeddings (a local, pure-Rust model2vec model) via reciprocal rank fusion. One
   compact row per hit — a token-efficient replacement for grep.

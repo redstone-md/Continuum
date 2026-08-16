@@ -117,7 +117,7 @@ fn walk(
             && rust_has_test_attr(node, src));
     if let Some((kind, name_field)) = def_spec(lang, node.kind()) {
         if let Some(name_node) = node.child_by_field_name(name_field) {
-            if let Ok(name) = name_node.utf8_text(src) {
+            if let Ok(name) = name_node.utf8_text(src).map(|n| trim_qualifier(lang, n)) {
                 let source = text_of(node, src);
                 let signature = source.lines().next().unwrap_or("").trim().to_string();
                 syms.push(RawSym {
@@ -167,11 +167,22 @@ fn rust_has_test_attr(node: Node, src: &[u8]) -> bool {
     false
 }
 
+/// Lua declares functions under their full path (`function M.foo()`,
+/// `function obj:method()`); index the final segment so call sites match.
+fn trim_qualifier(lang: Lang, name: &str) -> &str {
+    match lang {
+        Lang::Lua => name.rsplit(['.', ':']).next().unwrap_or(name),
+        _ => name,
+    }
+}
+
 /// Per-language test-name conventions. Rust is covered by attributes instead.
 fn name_is_test(lang: Lang, kind: NodeKind, name: &str) -> bool {
     match lang {
         Lang::Python => kind == NodeKind::Function && name.starts_with("test_"),
         Lang::Go => kind == NodeKind::Function && name.starts_with("Test") && name.len() > 4,
+        // PHPUnit: `testFoo` methods on a `FooTest` class.
+        Lang::Php => kind == NodeKind::Method && name.starts_with("test"),
         _ => false,
     }
 }
@@ -205,6 +216,17 @@ fn def_spec(lang: Lang, kind: &str) -> Option<(NodeKind, &'static str)> {
         (Lang::Go, "method_declaration") => Some((NodeKind::Method, "name")),
         (Lang::Go, "type_spec") => Some((NodeKind::Struct, "name")),
 
+        (Lang::Php, "function_definition") => Some((NodeKind::Function, "name")),
+        (Lang::Php, "method_declaration") => Some((NodeKind::Method, "name")),
+        (Lang::Php, "class_declaration") => Some((NodeKind::Class, "name")),
+        (Lang::Php, "interface_declaration") => Some((NodeKind::Interface, "name")),
+        (Lang::Php, "trait_declaration") => Some((NodeKind::Trait, "name")),
+        (Lang::Php, "enum_declaration") => Some((NodeKind::Enum, "name")),
+
+        // Lua has no classes: metatable OOP is a runtime pattern the grammar
+        // cannot see, so only named functions become symbols.
+        (Lang::Lua, "function_declaration") => Some((NodeKind::Function, "name")),
+
         _ => None,
     }
 }
@@ -216,22 +238,40 @@ fn callee_name(lang: Lang, node: Node, src: &[u8]) -> Option<String> {
         Lang::Rust => kind == "call_expression" || kind == "macro_invocation",
         Lang::Python => kind == "call",
         Lang::JavaScript | Lang::TypeScript | Lang::Go => kind == "call_expression",
+        Lang::Php => matches!(
+            kind,
+            "function_call_expression"
+                | "member_call_expression"
+                | "nullsafe_member_call_expression"
+                | "scoped_call_expression"
+        ),
+        Lang::Lua => kind == "function_call",
     };
     if !is_call {
         return None;
     }
-    let fn_node = if lang == Lang::Rust && kind == "macro_invocation" {
-        node.child_by_field_name("macro")?
-    } else {
-        node.child_by_field_name("function")?
+    // The callee hides behind a different field per grammar.
+    let field = match (lang, kind) {
+        (Lang::Rust, "macro_invocation") => "macro",
+        (Lang::Php, k) if k != "function_call_expression" => "name",
+        (Lang::Lua, _) => "name",
+        _ => "function",
     };
-    name_from_callee(fn_node, src)
+    name_from_callee(node.child_by_field_name(field)?, src)
 }
 
 fn name_from_callee(node: Node, src: &[u8]) -> Option<String> {
     let text = |n: Node| n.utf8_text(src).ok().map(str::to_string);
     match node.kind() {
-        "identifier" | "field_identifier" | "property_identifier" | "type_identifier" => text(node),
+        "identifier" | "field_identifier" | "property_identifier" | "type_identifier" | "name" => {
+            text(node)
+        }
+        // PHP `\Foo\bar()` — the trailing segment is the callee.
+        "qualified_name" => node
+            .named_child(node.named_child_count().checked_sub(1)?)
+            .and_then(text),
+        "dot_index_expression" => node.child_by_field_name("field").and_then(text),
+        "method_index_expression" => node.child_by_field_name("method").and_then(text),
         "field_expression" => node.child_by_field_name("field").and_then(text),
         "scoped_identifier" => node.child_by_field_name("name").and_then(text),
         "member_expression" => node.child_by_field_name("property").and_then(text),
@@ -314,6 +354,49 @@ mod tests {
     }
 
     #[test]
+    fn parses_php_and_attributes_calls() {
+        let src = "<?php\nclass Box {\n  function open() { helper(); $this->shut(); }\n}\nfunction helper() {}\n";
+        let parsed = parse("a.php", src, Lang::Php).expect("parsed");
+        let n = names(&parsed);
+        assert!(n.contains(&"Box".to_string()));
+        assert!(n.contains(&"helper".to_string()));
+        let open = parsed
+            .symbols
+            .iter()
+            .find(|s| s.name == "open")
+            .expect("open");
+        assert!(open.calls.iter().any(|c| c.name == "helper"));
+        assert!(open.calls.iter().any(|c| c.name == "shut"));
+    }
+
+    #[test]
+    fn php_test_methods_are_flagged() {
+        let src = "<?php\nclass BoxTest {\n  function testOpens() {}\n}\n";
+        let parsed = parse("t.php", src, Lang::Php).expect("parsed");
+        let m = parsed
+            .symbols
+            .iter()
+            .find(|s| s.name == "testOpens")
+            .expect("method");
+        assert!(m.is_test);
+    }
+
+    #[test]
+    fn parses_lua_with_qualified_names() {
+        let src =
+            "local M = {}\nfunction M.greet(n) return n end\nfunction M.run() M.greet(1) end\n";
+        let parsed = parse("a.lua", src, Lang::Lua).expect("parsed");
+        let n = names(&parsed);
+        assert!(n.contains(&"greet".to_string()), "got {n:?}");
+        let run = parsed
+            .symbols
+            .iter()
+            .find(|s| s.name == "run")
+            .expect("run");
+        assert!(run.calls.iter().any(|c| c.name == "greet"));
+    }
+
+    #[test]
     fn deeply_nested_input_does_not_overflow() {
         // A pathological nest must be bounded by MAX_AST_DEPTH, not crash.
         let src = format!("fn f() {{ {} }}", "if true {".repeat(9000)) + &"}".repeat(9000);
@@ -333,6 +416,8 @@ mod tests {
                 Lang::JavaScript,
                 Lang::TypeScript,
                 Lang::Go,
+                Lang::Php,
+                Lang::Lua,
             ] {
                 let _ = parse("fuzz", &src, lang);
             }

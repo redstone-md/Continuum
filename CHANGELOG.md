@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- PHP (`.php`, `.phtml`) and Lua (`.lua`) indexing. PHP contributes functions,
+  methods, classes, interfaces, traits and enums, with PHPUnit `test*` methods
+  flagged as tests; Lua contributes named function declarations, indexed under
+  their final segment so `function M.foo()` matches calls to `M.foo()`.
+
+### Changed
+
+- Bumped tree-sitter to 0.25 and every grammar to its ABI 15 release, which the
+  PHP and Lua grammars require.
+
 ## [0.1.6] - 2026-06-02
 
 ### Fixed
